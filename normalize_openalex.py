@@ -81,11 +81,54 @@ raw_papers = json.loads(
     (input_folder / "works.json").read_text(encoding="utf-8")
 )
 
-# Associate each paper's year with its original API request.
-requests_by_year = {
-    request["year"]: request
-    for request in manifest["requests"]
-}
+# Find each paper in the response pages recorded in the manifest.
+requests_by_id = {}
+source_works_by_id = {}
+
+for request in manifest["requests"]:
+    response_filename = request["response_file"]
+
+    if Path(response_filename).name != response_filename:
+        raise ValueError("Expected a response filename, not a path.")
+
+    response_file = input_folder / response_filename
+    response = json.loads(response_file.read_text(encoding="utf-8"))
+    batch = response["results"]
+
+    if len(batch) != request["records_received"]:
+        raise ValueError(
+            f"Response count differs from manifest: {response_filename}"
+        )
+
+    for source_work in batch:
+        work_id = source_work["id"]
+
+        if work_id in requests_by_id:
+            raise ValueError(
+                f"Paper appears in multiple response pages: {work_id}"
+            )
+
+        if source_work["publication_year"] != request["year"]:
+            raise ValueError(
+                f"Paper year differs from its request: {work_id}"
+            )
+
+        requests_by_id[work_id] = request
+        source_works_by_id[work_id] = source_work
+
+raw_ids = [work["id"] for work in raw_papers]
+
+if len(raw_ids) != len(set(raw_ids)):
+    raise ValueError("Duplicate IDs in works.json.")
+
+if set(raw_ids) != set(requests_by_id):
+    raise ValueError("Response-page IDs differ from works.json IDs.")
+
+for work in raw_papers:
+    if work != source_works_by_id[work["id"]]:
+        raise ValueError(
+            f"Record differs from its original response: {work['id']}"
+        )
 
 papers = []
 invalid_abstract_ids = []
@@ -122,7 +165,7 @@ for work in raw_papers:
         })
 
     topic = work.get("primary_topic") or {}
-    source_request = requests_by_year[work["publication_year"]]
+    source_request = requests_by_id[work["id"]]
 
     paper = {
         "openalex_id": work["id"],
@@ -141,6 +184,18 @@ for work in raw_papers:
         "current_citation_count": work.get("cited_by_count"),
         "five_year_citation_count": None,
         "publication_time_features_verified": False,
+        "observed_is_retracted": work.get("is_retracted"),
+        "observed_is_authors_truncated": work.get("is_authors_truncated"),
+        "quality_flags": {
+            "missing_title": clean_text(work.get("title")) is None,
+            "abstract_unavailable": abstract is None,
+            "abstract_index_invalid": work["id"] in invalid_abstract_ids,
+            "missing_authorships": not authors,
+            "without_recorded_institutions": not any(
+                author["institutions"] for author in authors
+            ),
+           "missing_doi": normalize_doi(work.get("doi")) is None,
+        },
         "provenance": {
             "collection_run": run_id,
             "raw_response_file": source_request["response_file"],

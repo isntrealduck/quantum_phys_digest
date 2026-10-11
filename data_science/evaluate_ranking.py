@@ -27,6 +27,13 @@ parser.add_argument(
         "catboost_basic",
         "xgboost_basic",
         "lightgbm_basic",
+        "catboost_text",
+        "catboost_author",
+        "catboost_text_author",
+        "xgboost_text",
+        "lightgbm_text",
+        "random_forest_text",
+        "catboost_institution",
     ],
 )
 parser.add_argument("model_run")
